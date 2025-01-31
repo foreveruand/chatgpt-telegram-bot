@@ -94,26 +94,6 @@ def localized_text(key, bot_language):
             # return key as text
             return key
         
-def bing_search(query):
-    subscription_key = os.environ['BING_API_KEY']
-    # search_url = 
-    # headers = {"Ocp-Apim-Subscription-Key": subscription_key}
-    # params = {"q": query, "textDecorations": True, "textFormat": "HTML"}
-    # response = requests.get(search_url, headers=headers, params=params)
-    # response.raise_for_status()
-
-    endpoint = "https://api.bing.microsoft.com" + "/v7.0/search"
-    # Construct a request
-    mkt = 'zh-CN'
-    params = { 'q': query, 'mkt': mkt }
-    headers = { 'Ocp-Apim-Subscription-Key': subscription_key }
-    # Call the API
-    try:
-        response = requests.get(endpoint, headers=headers, params=params)
-        response.raise_for_status()
-        return response.json()
-    except Exception as ex:
-        raise ex
 
 class OpenAIHelper:
     """

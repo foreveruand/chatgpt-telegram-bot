@@ -9,6 +9,7 @@ from plugins.spotify import SpotifyPlugin
 from plugins.crypto import CryptoPlugin
 from plugins.weather import WeatherPlugin
 from plugins.ddg_web_search import DDGWebSearchPlugin
+from plugins.bing_web_search import BINGWebSearchPlugin
 from plugins.wolfram_alpha import WolframAlphaPlugin
 from plugins.deepl import DeeplTranslatePlugin
 from plugins.worldtimeapi import WorldTimeApiPlugin
@@ -40,6 +41,7 @@ class PluginManager:
             'whois': WhoisPlugin,
             'webshot': WebshotPlugin,
             'iplocation': IpLocationPlugin,
+            'bing_web_search': BINGWebSearchPlugin,
         }
         self.plugins = [plugin_mapping[plugin]() for plugin in enabled_plugins if plugin in plugin_mapping]
 
