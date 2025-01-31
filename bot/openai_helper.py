@@ -128,7 +128,7 @@ class OpenAIHelper:
         """
         http_client = httpx.AsyncClient(proxy=config['proxy']) if 'proxy' in config else None
         if (config['provider']=='azure'):
-            self.client = openai.AsyncAzureOpenAI(api_key=config['api_key'], http_client=http_client,azure_endpoint=config['base_url'],api_version="2023-09-01-preview")
+            self.client = openai.AsyncAzureOpenAI(api_key=config['api_key'], http_client=http_client,azure_endpoint=config['base_url'],api_version="2024-07-01-preview")
         elif (config['provider']=='deepseek'):
             self.client = openai.AsyncOpenAI(api_key=config['deepseek_api_key'], base_url=config['deepseek_base_url'],http_client=http_client)
         else :
@@ -142,7 +142,7 @@ class OpenAIHelper:
     def reload_config(self):
         http_client = httpx.AsyncClient(proxy=self.config['proxy']) if 'proxy' in self.config else None
         if (self.config['provider']=='azure'):
-            self.client = openai.AsyncAzureOpenAI(api_key=self.config['api_key'], http_client=http_client,azure_endpoint=self.config['base_url'],api_version="2023-09-01-preview")
+            self.client = openai.AsyncAzureOpenAI(api_key=self.config['api_key'], http_client=http_client,azure_endpoint=self.config['base_url'],api_version="2024-07-01-preview")
         elif (self.config['provider']=='deepseek'):
             self.client = openai.AsyncOpenAI(api_key=self.config['deepseek_api_key'], base_url=self.config['deepseek_base_url'],http_client=http_client)
         else :
@@ -212,21 +212,6 @@ class OpenAIHelper:
         :return: The answer from the model and the number of tokens used, or 'not_finished'
         """
         plugins_used = ()
-        judge_response = await self.client.chat.completions.create(
-            messages=[{"role": "system", "content": "Answer with false or true"},{"role": "user", "content": f" if a web search is needed to solve '{query}'."}],
-            model=self.config['model'],
-            temperature=self.config['temperature'],
-            max_tokens=self.config['max_tokens'],
-            timeout=5.0,
-            stream=False
-        )
-        # response = await self.__common_get_chat_response(chat_id, , stream=True, nomemory=True)
-        logging.info(f"the query {query} need a web search :{judge_response.choices[0].message.content}")
-        if judge_response.choices[0].message.content == "True":
-            search_results = bing_search(query)
-            top_result = search_results['webPages']['value'][0]['snippet']
-            query = f"根据以下搜索结果回答问题：{query}\n\n搜索结果：{top_result}\n"
-            logging.info(f"change the query with web search results{query}")
 
         response = await self.__common_get_chat_response(chat_id, query, stream=True, nomemory=nomemory)
         if self.config['enable_functions'] and not self.conversations_vision[chat_id]:
@@ -310,10 +295,17 @@ class OpenAIHelper:
             }
 
             if self.config['enable_functions'] and not self.conversations_vision[chat_id]:
+                logging.debug(f'enable functions for this chat')
                 functions = self.plugin_manager.get_functions_specs()
                 if len(functions) > 0:
-                    common_args['functions'] = self.plugin_manager.get_functions_specs()
-                    common_args['function_call'] = 'auto'
+                    if self.config['provider']=='azure':
+                        common_args['tools'] = self.plugin_manager.get_functions_specs('azure')
+                        common_args['tool_choice'] = 'auto'
+                        logging.debug(f"add function(azure):{common_args['tools']} into request")
+                    else:
+                        common_args['functions'] = self.plugin_manager.get_functions_specs()
+                        common_args['function_call'] = 'auto'
+                        logging.debug(f"add function:{common_args['functions']} into request")
             return await self.client.chat.completions.create(**common_args)
 
         except openai.RateLimitError as e:
@@ -328,9 +320,31 @@ class OpenAIHelper:
     async def __handle_function_call(self, chat_id, response, stream=False, times=0, plugins_used=()):
         function_name = ''
         arguments = ''
+        tool_call_id = ''
         if stream:
             async for item in response:
-                if len(item.choices) > 0:
+                if not item.choices:
+                    continue
+                logging.debug(f'handle response from openai(handle function): {item}')
+                if self.config['provider']=='azure' and len(item.choices) > 0:
+                    # Process the model's response
+                    first_choice = item.choices[0]
+                    if first_choice.delta and first_choice.delta.tool_calls:
+                        # logging.info(f'found tool calls')
+                        for function_chunk in first_choice.delta.tool_calls:
+                            if function_chunk.function.arguments:
+                                arguments += function_chunk.function.arguments
+                            if function_chunk.function.name:
+                                function_name += function_chunk.function.name
+                            if function_chunk.id:
+                                tool_call_id += function_chunk.id
+                            
+                    elif first_choice.finish_reason:
+                        logging.info(f"finish_reason: {first_choice.finish_reason}")
+                        break
+                    else:
+                        return response, plugins_used
+                elif len(item.choices) > 0:
                     first_choice = item.choices[0]
                     if first_choice.delta and first_choice.delta.function_call:
                         if first_choice.delta.function_call.name:
@@ -344,7 +358,17 @@ class OpenAIHelper:
                 else:
                     return response, plugins_used
         else:
-            if len(response.choices) > 0:
+            if self.config['provider']=='azure' and len(item.choices) > 0:
+                return
+                # first_choice = response.choices[0]
+                # if first_choice.message.tool_calls:
+                #     if first_choice.message.function_call.name:
+                #         function_name += first_choice.message.function_call.name
+                #     if first_choice.message.function_call.arguments:
+                #         arguments += first_choice.message.function_call.arguments
+                # else:
+                #     return response, plugins_used
+            elif len(response.choices) > 0:
                 first_choice = response.choices[0]
                 if first_choice.message.function_call:
                     if first_choice.message.function_call.name:
@@ -365,17 +389,27 @@ class OpenAIHelper:
         if is_direct_result(function_response):
             self.__add_function_call_to_history(chat_id=chat_id, function_name=function_name,
                                                 content=json.dumps({'result': 'Done, the content has been sent'
-                                                                              'to the user.'}))
+                                                                              'to the user.'}),tool_call_id=tool_call_id)
             return function_response, plugins_used
 
-        self.__add_function_call_to_history(chat_id=chat_id, function_name=function_name, content=function_response)
-        response = await self.client.chat.completions.create(
-            model=self.config['model'],
-            messages=self.conversations[chat_id],
-            functions=self.plugin_manager.get_functions_specs(),
-            function_call='auto' if times < self.config['functions_max_consecutive_calls'] else 'none',
-            stream=stream
-        )
+        self.__add_function_call_to_history(chat_id=chat_id, function_name=function_name, content=function_response,tool_call_id=tool_call_id,arguments=arguments)
+
+        if self.config['provider']=='azure':
+            response = await self.client.chat.completions.create(
+                model=self.config['model'],
+                messages=self.conversations[chat_id],
+                tools=self.plugin_manager.get_functions_specs(provider='azure'),
+                tool_choice='auto' if times < self.config['functions_max_consecutive_calls'] else 'none',
+                stream=stream
+            )
+        else:
+            response = await self.client.chat.completions.create(
+                model=self.config['model'],
+                messages=self.conversations[chat_id],
+                functions=self.plugin_manager.get_functions_specs(),
+                function_call='auto' if times < self.config['functions_max_consecutive_calls'] else 'none',
+                stream=stream
+            )
         return await self.__handle_function_call(chat_id, response, stream, times + 1, plugins_used)
 
     async def generate_image(self, prompt: str) -> tuple[str, str]:
@@ -640,11 +674,15 @@ class OpenAIHelper:
         max_age_minutes = self.config['max_conversation_age_minutes']
         return last_updated < now - datetime.timedelta(minutes=max_age_minutes)
 
-    def __add_function_call_to_history(self, chat_id, function_name, content):
+    def __add_function_call_to_history(self, chat_id, function_name, content,tool_call_id=None,arguments=None):
         """
         Adds a function call to the conversation history
         """
-        self.conversations[chat_id].append({"role": "function", "name": function_name, "content": content})
+        if self.config['provider']=="azure":
+            self.conversations[chat_id].append({"role": "assistant", 'tool_calls': [{'id': tool_call_id, 'function': {'arguments': arguments, 'name': function_name}, 'type': 'function'}]})
+            self.conversations[chat_id].append({"tool_call_id": tool_call_id,"role": "tool", "name": function_name, "content": content})
+        else:
+            self.conversations[chat_id].append({"role": "function", "name": function_name, "content": content})
 
     def __add_to_history(self, chat_id, role, content):
         """
@@ -735,7 +773,14 @@ class OpenAIHelper:
                             else:
                                 num_tokens += len(encoding.encode(message1['text']))
                 else:
-                    num_tokens += len(encoding.encode(value))
+                    try:
+                        num_tokens += len(encoding.encode(value))
+                    except:
+                        value_str = json.dumps(value)
+                        try:
+                            num_tokens += len(encoding.encode(value_str))
+                        except:
+                            pass
                     if key == "name":
                         num_tokens += tokens_per_name
         num_tokens += 3  # every reply is primed with <|start|>assistant<|message|>

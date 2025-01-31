@@ -43,11 +43,14 @@ class PluginManager:
         }
         self.plugins = [plugin_mapping[plugin]() for plugin in enabled_plugins if plugin in plugin_mapping]
 
-    def get_functions_specs(self):
+    def get_functions_specs(self,provider='openai'):
         """
         Return the list of function specs that can be called by the model
         """
-        return [spec for specs in map(lambda plugin: plugin.get_spec(), self.plugins) for spec in specs]
+        if provider=='azure':
+            return [{"type":"function","function": spec} for specs in map(lambda plugin: plugin.get_spec(), self.plugins) for spec in specs]
+        else:
+            return [spec for specs in map(lambda plugin: plugin.get_spec(), self.plugins) for spec in specs]
 
     async def call_function(self, function_name, helper, arguments):
         """
