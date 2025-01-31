@@ -6,7 +6,7 @@ import os
 import tiktoken
 
 import openai
-
+import requests
 import json
 import httpx
 import io
@@ -27,7 +27,8 @@ GPT_4_VISION_MODELS = ("gpt-4o",)
 GPT_4_128K_MODELS = ("gpt-4-1106-preview", "gpt-4-0125-preview", "gpt-4-turbo-preview", "gpt-4-turbo", "gpt-4-turbo-2024-04-09")
 GPT_4O_MODELS = ("gpt-4o", "gpt-4o-mini", "chatgpt-4o-latest")
 O_MODELS = ("o1", "o1-mini", "o1-preview")
-GPT_ALL_MODELS = GPT_3_MODELS + GPT_3_16K_MODELS + GPT_4_MODELS + GPT_4_32K_MODELS + GPT_4_VISION_MODELS + GPT_4_128K_MODELS + GPT_4O_MODELS + O_MODELS
+DEEP_SEEK_MODELS= ("deepseek-chat","deepseek-reasoner")
+GPT_ALL_MODELS = DEEP_SEEK_MODELS+GPT_3_MODELS + GPT_3_16K_MODELS + GPT_4_MODELS + GPT_4_32K_MODELS + GPT_4_VISION_MODELS + GPT_4_128K_MODELS + GPT_4O_MODELS + O_MODELS
 
 def default_max_tokens(model: str) -> int:
     """
@@ -53,6 +54,8 @@ def default_max_tokens(model: str) -> int:
     elif model in GPT_4O_MODELS:
         return 4096
     elif model in O_MODELS:
+        return 4096
+    else:
         return 4096
 
 
@@ -90,13 +93,33 @@ def localized_text(key, bot_language):
             logging.warning(f"No english definition found for key '{key}' in translations.json")
             # return key as text
             return key
+        
+def bing_search(query):
+    subscription_key = os.environ['BING_API_KEY']
+    # search_url = 
+    # headers = {"Ocp-Apim-Subscription-Key": subscription_key}
+    # params = {"q": query, "textDecorations": True, "textFormat": "HTML"}
+    # response = requests.get(search_url, headers=headers, params=params)
+    # response.raise_for_status()
 
+    endpoint = "https://api.bing.microsoft.com" + "/v7.0/search"
+    # Construct a request
+    mkt = 'zh-CN'
+    params = { 'q': query, 'mkt': mkt }
+    headers = { 'Ocp-Apim-Subscription-Key': subscription_key }
+    # Call the API
+    try:
+        response = requests.get(endpoint, headers=headers, params=params)
+        response.raise_for_status()
+        return response.json()
+    except Exception as ex:
+        raise ex
 
 class OpenAIHelper:
     """
     ChatGPT helper class.
     """
-
+            
     def __init__(self, config: dict, plugin_manager: PluginManager):
         """
         Initializes the OpenAI helper class with the given configuration.
@@ -104,13 +127,30 @@ class OpenAIHelper:
         :param plugin_manager: The plugin manager
         """
         http_client = httpx.AsyncClient(proxy=config['proxy']) if 'proxy' in config else None
-        self.client = openai.AsyncOpenAI(api_key=config['api_key'], http_client=http_client)
+        if (config['provider']=='azure'):
+            self.client = openai.AsyncAzureOpenAI(api_key=config['api_key'], http_client=http_client,azure_endpoint=config['base_url'],api_version="2023-09-01-preview")
+        elif (config['provider']=='deepseek'):
+            self.client = openai.AsyncOpenAI(api_key=config['deepseek_api_key'], base_url=config['deepseek_base_url'],http_client=http_client)
+        else :
+            self.client = openai.AsyncOpenAI(api_key=config['api_key'], base_url=config['base_url'],http_client=http_client)
         self.config = config
         self.plugin_manager = plugin_manager
         self.conversations: dict[int: list] = {}  # {chat_id: history}
         self.conversations_vision: dict[int: bool] = {}  # {chat_id: is_vision}
         self.last_updated: dict[int: datetime] = {}  # {chat_id: last_update_timestamp}
 
+    def reload_config(self):
+        http_client = httpx.AsyncClient(proxy=self.config['proxy']) if 'proxy' in self.config else None
+        if (self.config['provider']=='azure'):
+            self.client = openai.AsyncAzureOpenAI(api_key=self.config['api_key'], http_client=http_client,azure_endpoint=self.config['base_url'],api_version="2023-09-01-preview")
+        elif (self.config['provider']=='deepseek'):
+            self.client = openai.AsyncOpenAI(api_key=self.config['deepseek_api_key'], base_url=self.config['deepseek_base_url'],http_client=http_client)
+        else :
+            self.client = openai.AsyncOpenAI(api_key=self.config['api_key'], base_url=self.config['base_url'],http_client=http_client)
+    def update_config(self, config):
+        self.config.update(config)
+        self.reload_config()
+        pass
     def get_conversation_stats(self, chat_id: int) -> tuple[int, int]:
         """
         Gets the number of messages and tokens used in the conversation.
@@ -164,7 +204,7 @@ class OpenAIHelper:
 
         return answer, response.usage.total_tokens
 
-    async def get_chat_response_stream(self, chat_id: int, query: str):
+    async def get_chat_response_stream(self, chat_id: int, query: str, nomemory: bool = False):
         """
         Stream response from the GPT model.
         :param chat_id: The chat ID
@@ -172,7 +212,23 @@ class OpenAIHelper:
         :return: The answer from the model and the number of tokens used, or 'not_finished'
         """
         plugins_used = ()
-        response = await self.__common_get_chat_response(chat_id, query, stream=True)
+        judge_response = await self.client.chat.completions.create(
+            messages=[{"role": "system", "content": "Answer with false or true"},{"role": "user", "content": f" if a web search is needed to solve '{query}'."}],
+            model=self.config['model'],
+            temperature=self.config['temperature'],
+            max_tokens=self.config['max_tokens'],
+            timeout=5.0,
+            stream=False
+        )
+        # response = await self.__common_get_chat_response(chat_id, , stream=True, nomemory=True)
+        logging.info(f"the query {query} need a web search :{judge_response.choices[0].message.content}")
+        if judge_response.choices[0].message.content == "True":
+            search_results = bing_search(query)
+            top_result = search_results['webPages']['value'][0]['snippet']
+            query = f"根据以下搜索结果回答问题：{query}\n\n搜索结果：{top_result}\n"
+            logging.info(f"change the query with web search results{query}")
+
+        response = await self.__common_get_chat_response(chat_id, query, stream=True, nomemory=nomemory)
         if self.config['enable_functions'] and not self.conversations_vision[chat_id]:
             response, plugins_used = await self.__handle_function_call(chat_id, response, stream=True)
             if is_direct_result(response):
@@ -208,7 +264,7 @@ class OpenAIHelper:
         wait=wait_fixed(20),
         stop=stop_after_attempt(3)
     )
-    async def __common_get_chat_response(self, chat_id: int, query: str, stream=False):
+    async def __common_get_chat_response(self, chat_id: int, query: str, stream=False, nomemory: bool = False):
         """
         Request a response from the GPT model.
         :param chat_id: The chat ID
@@ -221,15 +277,15 @@ class OpenAIHelper:
                 self.reset_chat_history(chat_id)
 
             self.last_updated[chat_id] = datetime.datetime.now()
-
-            self.__add_to_history(chat_id, role="user", content=query)
+            if not nomemory:
+                self.__add_to_history(chat_id, role="user", content=query)
 
             # Summarize the chat history if it's too long to avoid excessive token usage
             token_count = self.__count_tokens(self.conversations[chat_id])
             exceeded_max_tokens = token_count + self.config['max_tokens'] > self.__max_model_tokens()
             exceeded_max_history_size = len(self.conversations[chat_id]) > self.config['max_history_size']
 
-            if exceeded_max_tokens or exceeded_max_history_size:
+            if not nomemory and (exceeded_max_tokens or exceeded_max_history_size):
                 logging.info(f'Chat history for chat ID {chat_id} is too long. Summarising...')
                 try:
                     summary = await self.__summarise(self.conversations[chat_id][:-1])
@@ -244,7 +300,7 @@ class OpenAIHelper:
             max_tokens_str = 'max_completion_tokens' if self.config['model'] in O_MODELS else 'max_tokens'
             common_args = {
                 'model': self.config['model'] if not self.conversations_vision[chat_id] else self.config['vision_model'],
-                'messages': self.conversations[chat_id],
+                'messages': self.conversations[chat_id] if not nomemory else [{"role": "system", "content": self.config['assistant_prompt']},{"role": "user", "content": query}],
                 'temperature': self.config['temperature'],
                 'n': self.config['n_choices'],
                 max_tokens_str: self.config['max_tokens'],
@@ -606,7 +662,7 @@ class OpenAIHelper:
         :return: The summary
         """
         messages = [
-            {"role": "assistant", "content": "Summarize this conversation in 700 characters or less"},
+            {"role": "assistant" if self.config['model'] in O_MODELS else "system", "content": "Summarize this conversation in 700 characters or less"},
             {"role": "user", "content": str(conversation)}
         ]
         response = await self.client.chat.completions.create(
@@ -640,6 +696,8 @@ class OpenAIHelper:
                 return 32_768
             else:
                 return 65_536
+        elif self.config['model'] in DEEP_SEEK_MODELS:
+            return base
         raise NotImplementedError(
             f"Max tokens for model {self.config['model']} is not implemented yet."
         )

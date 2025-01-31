@@ -11,7 +11,7 @@ from telegram import InlineKeyboardMarkup, InlineKeyboardButton, InlineQueryResu
 from telegram import InputTextMessageContent, BotCommand
 from telegram.error import RetryAfter, TimedOut, BadRequest
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, \
-    filters, InlineQueryHandler, CallbackQueryHandler, Application, ContextTypes, CallbackContext
+    filters, InlineQueryHandler, ChosenInlineResultHandler, CallbackQueryHandler, Application, ContextTypes, CallbackContext
 
 from pydub import AudioSegment
 from PIL import Image
@@ -60,6 +60,8 @@ class ChatGPTTelegramBot:
         self.last_message = {}
         self.inline_queries_cache = {}
 
+    def reload_config(self,update_config=''):
+        pass
     async def help(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         """
         Shows the help menu.
@@ -183,6 +185,30 @@ class ChatGPTTelegramBot:
 
         usage_text = text_current_conversation + text_today + text_month + text_budget
         await update.message.reply_text(usage_text, parse_mode=constants.ParseMode.MARKDOWN)
+
+    async def setmodel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """
+        Change the model.
+        """
+        user_id = update.message.from_user.id
+        if not is_admin(self.config, user_id):
+            logging.warning(f'User {update.message.from_user.name} (id: {update.message.from_user.id}) '
+                            'is not allowed to change the model')
+            await self.send_disallowed_message(update, context)
+            return
+
+        logging.info(f'Admin {update.message.from_user.name} (id: {update.message.from_user.id}) '
+                     'requested to change the model')
+        
+        command_args = message_text(update.message)
+        command_args = command_args.split()
+        try:
+            update_config = {'provider': command_args[0],'model':command_args[1]}
+            self.openai.update_config(update_config)
+            self.reload_config()
+            await update.message.reply_text(f'change config to {update_config}', parse_mode=constants.ParseMode.MARKDOWN)
+        except Exception as e:
+            await update.message.reply_text(f'change model failed with error {e}', parse_mode=constants.ParseMode.MARKDOWN)
 
     async def resend(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -830,13 +856,13 @@ class ChatGPTTelegramBot:
         Send inline query result
         """
         try:
-            reply_markup = None
+            # reply_markup = None
             bot_language = self.config['bot_language']
-            if callback_data:
-                reply_markup = InlineKeyboardMarkup([[
-                    InlineKeyboardButton(text=f'🤖 {localized_text("answer_with_chatgpt", bot_language)}',
-                                         callback_data=callback_data)
-                ]])
+            # if callback_data:
+            #     reply_markup = InlineKeyboardMarkup([[
+            #         InlineKeyboardButton(text=f'🤖 {localized_text("answer_with_chatgpt", bot_language)}',
+            #                              callback_data=callback_data)
+            #     ]])
 
             inline_query_result = InlineQueryResultArticle(
                 id=result_id,
@@ -844,13 +870,125 @@ class ChatGPTTelegramBot:
                 input_message_content=InputTextMessageContent(message_content),
                 description=message_content,
                 thumbnail_url='https://user-images.githubusercontent.com/11541888/223106202-7576ff11-2c8e-408d-94ea-b02a7a32149a.png',
-                reply_markup=reply_markup
+                # reply_markup=reply_markup
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [InlineKeyboardButton("🐱 I'm thinking...", switch_inline_query_current_chat = message_content)]
+                    ]
+                )
             )
-
+            # logging.info(f"print result_id:{result_id}")
             await update.inline_query.answer([inline_query_result], cache_time=0)
+                 
         except Exception as e:
             logging.error(f'An error occurred while generating the result card for inline query {e}')
 
+    async def inline_query_result_chosen(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        logging.info(f"Get a inline query result chosen from user {str(update.effective_user.id)} with message ID {update.chosen_inline_result.inline_message_id}")
+        # invalid user won't get a response
+        try:
+            # get userid and resultid
+            user_id = update.chosen_inline_result.from_user.id
+            result_id = update.chosen_inline_result.result_id
+            inline_message_id = update.chosen_inline_result.inline_message_id
+            query = update.chosen_inline_result.query
+
+            bot_language = self.config['bot_language']
+            ask_tr = localized_text("ask", bot_language)
+            answer_tr = localized_text("answer", bot_language)
+            loading_tr = localized_text("loading", bot_language)
+            divider = '_'
+
+            # logging.info(f"Check allowed inline chosen from user {str(update.effective_user.id)} with message ID {update.chosen_inline_result.inline_message_id}")
+            if not await self.check_allowed_and_within_budget(update, context, is_inline_chosen=True):
+                # logging.info(f"not allowed from user {str(update.effective_user.id)} with message ID {update.chosen_inline_result.inline_message_id}")
+                return
+            try:
+                total_tokens = 0
+
+                # # Retrieve the prompt from the cache
+                # if query:
+                #     self.inline_queries_cache.pop(unique_id)
+                # else:
+                #     error_message = (
+                #         f'{localized_text("error", bot_language)}. '
+                #         f'{localized_text("try_again", bot_language)}'
+                #     )
+                #     await edit_message_with_retry(context, chat_id=None, message_id=inline_message_id,
+                #                                 text=f'{query}\n\n_{answer_tr}:_\n{error_message}',
+                #                                 is_inline=True)
+                #     return
+
+                unavailable_message = localized_text("function_unavailable_in_inline_mode", bot_language)
+                if self.config['stream']:
+                    stream_response = self.openai.get_chat_response_stream(chat_id=user_id, query=query,nomemory=True)
+                    i = 0
+                    prev = ''
+                    backoff = 0
+                    async for content, tokens in stream_response:
+                        if is_direct_result(content):
+                            cleanup_intermediate_files(content)
+                            await edit_message_with_retry(context, chat_id=None,
+                                                        message_id=inline_message_id,
+                                                        text=f'{divider}{ask_tr}:{divider}{query}{divider}\n{answer_tr}:{divider}{unavailable_message}',
+                                                        is_inline=True)
+                            return
+
+                        if len(content.strip()) == 0:
+                            continue
+
+                        cutoff = get_stream_cutoff_values(update, content)
+                        cutoff += backoff
+
+                        if i == 0:
+                            try:
+                                await edit_message_with_retry(context, chat_id=None,
+                                                            message_id=inline_message_id,
+                                                            text=f'{divider}{ask_tr}:{divider}{query}{divider}\n{answer_tr}:{divider}{content}',
+                                                            is_inline=True)
+                            except:
+                                continue
+
+                        elif abs(len(content) - len(prev)) > cutoff or tokens != 'not_finished':
+                            prev = content
+                            try:
+                                use_markdown = tokens != 'not_finished'
+                                divider = '_' if use_markdown else ''
+                                text = f'{divider}{ask_tr}:{divider}{query}{divider}\n{answer_tr}:{divider}{content}'
+
+                                # We only want to send the first 4096 characters. No chunking allowed in inline mode.
+                                text = text[:4096]
+
+                                await edit_message_with_retry(context, chat_id=None, message_id=inline_message_id,
+                                                            text=text, markdown=use_markdown, is_inline=True)
+
+                            except RetryAfter as e:
+                                backoff += 5
+                                await asyncio.sleep(e.retry_after)
+                                continue
+                            except TimedOut:
+                                backoff += 5
+                                await asyncio.sleep(0.5)
+                                continue
+                            except Exception:
+                                backoff += 5
+                                continue
+
+                            await asyncio.sleep(0.01)
+
+                        i += 1
+                        if tokens != 'not_finished':
+                            total_tokens = int(tokens)
+            except Exception as e:
+                logging.exception(e)
+                localized_answer = localized_text('chat_fail', self.config['bot_language'])
+                await edit_message_with_retry(context, chat_id=None, message_id=inline_message_id,
+                                            text=f"_{ask_tr}:_{query}\n_{answer_tr}:_\n{localized_answer} {str(e)}",
+                                            is_inline=True)   
+            # # TODO: replace result_id 
+
+        except Exception as e:
+            logging.error(f"process inline chosen with error :{e}" )
     async def handle_callback_inline_query(self, update: Update, context: CallbackContext):
         """
         Handle the callback query from the inline query result
@@ -864,7 +1002,7 @@ class ChatGPTTelegramBot:
         bot_language = self.config['bot_language']
         answer_tr = localized_text("answer", bot_language)
         loading_tr = localized_text("loading", bot_language)
-
+        # logging.info(f"print callbackcontext:{context};pring inline_message_id:{inline_message_id}")
         try:
             if callback_data.startswith(callback_data_suffix):
                 unique_id = callback_data.split(':')[1]
@@ -886,7 +1024,7 @@ class ChatGPTTelegramBot:
 
                 unavailable_message = localized_text("function_unavailable_in_inline_mode", bot_language)
                 if self.config['stream']:
-                    stream_response = self.openai.get_chat_response_stream(chat_id=user_id, query=query)
+                    stream_response = self.openai.get_chat_response_stream(chat_id=user_id, query=query,nomemory=True)
                     i = 0
                     prev = ''
                     backoff = 0
@@ -987,7 +1125,7 @@ class ChatGPTTelegramBot:
                                           is_inline=True)
 
     async def check_allowed_and_within_budget(self, update: Update, context: ContextTypes.DEFAULT_TYPE,
-                                              is_inline=False) -> bool:
+                                              is_inline=False, is_inline_chosen=False) -> bool:
         """
         Checks if the user is allowed to use the bot and if they are within their budget
         :param update: Telegram update object
@@ -995,30 +1133,39 @@ class ChatGPTTelegramBot:
         :param is_inline: Boolean flag for inline queries
         :return: Boolean indicating if the user is allowed to use the bot
         """
-        name = update.inline_query.from_user.name if is_inline else update.message.from_user.name
-        user_id = update.inline_query.from_user.id if is_inline else update.message.from_user.id
-
-        if not await is_allowed(self.config, update, context, is_inline=is_inline):
+        name = update.chosen_inline_result.from_user.name if is_inline_chosen else update.inline_query.from_user.name if is_inline else update.message.from_user.name
+        user_id = update.chosen_inline_result.from_user.id if is_inline_chosen else update.inline_query.from_user.id if is_inline else update.message.from_user.id
+        
+        if not await is_allowed(self.config, update, context, is_inline=is_inline,is_inline_chosen=is_inline_chosen):
             logging.warning(f'User {name} (id: {user_id}) is not allowed to use the bot')
-            await self.send_disallowed_message(update, context, is_inline)
+            try:
+                await self.send_disallowed_message(update, context, is_inline, is_inline_chosen)
+            except Exception as e:
+                logging.warning(f'seed disallowed message failed with exception{e}')
             return False
-        if not is_within_budget(self.config, self.usage, update, is_inline=is_inline):
+        if not is_within_budget(self.config, self.usage, update, is_inline=is_inline,is_inline_chosen=is_inline_chosen):
             logging.warning(f'User {name} (id: {user_id}) reached their usage limit')
             await self.send_budget_reached_message(update, context, is_inline)
             return False
-
+        logging.info(f"check user {user_id} can use the bot")
         return True
 
-    async def send_disallowed_message(self, update: Update, _: ContextTypes.DEFAULT_TYPE, is_inline=False):
+    async def send_disallowed_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE, is_inline=False,is_inline_chosen=False):
         """
         Sends the disallowed message to the user.
         """
-        if not is_inline:
+        if not is_inline and not is_inline_chosen:
             await update.effective_message.reply_text(
                 message_thread_id=get_thread_id(update),
                 text=self.disallowed_message,
                 disable_web_page_preview=True
             )
+        elif is_inline_chosen:
+            # logging.info(f'seed disallowed message in inline chosen mode')
+            await edit_message_with_retry(context, chat_id=None,
+                            message_id=update.chosen_inline_result.inline_message_id,
+                            text=f"your id {update.chosen_inline_result.from_user.id} is not in the allowed list",
+                            is_inline=True)
         else:
             result_id = str(uuid4())
             await self.send_inline_query_result(update, result_id, message_content=self.disallowed_message)
@@ -1062,6 +1209,7 @@ class ChatGPTTelegramBot:
         application.add_handler(CommandHandler('start', self.help))
         application.add_handler(CommandHandler('stats', self.stats))
         application.add_handler(CommandHandler('resend', self.resend))
+        application.add_handler(CommandHandler('set', self.setmodel))
         application.add_handler(CommandHandler(
             'chat', self.prompt, filters=filters.ChatType.GROUP | filters.ChatType.SUPERGROUP)
         )
@@ -1076,8 +1224,8 @@ class ChatGPTTelegramBot:
         application.add_handler(InlineQueryHandler(self.inline_query, chat_types=[
             constants.ChatType.GROUP, constants.ChatType.SUPERGROUP, constants.ChatType.PRIVATE
         ]))
-        application.add_handler(CallbackQueryHandler(self.handle_callback_inline_query))
-
+        # application.add_handler(CallbackQueryHandler(self.handle_callback_inline_query))
+        application.add_handler(ChosenInlineResultHandler(self.inline_query_result_chosen))
         application.add_error_handler(error_handler)
 
         application.run_polling()

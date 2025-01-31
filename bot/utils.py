@@ -148,17 +148,17 @@ async def error_handler(_: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logging.error(f'Exception while handling an update: {context.error}')
 
 
-async def is_allowed(config, update: Update, context: CallbackContext, is_inline=False) -> bool:
+async def is_allowed(config, update: Update, context: CallbackContext, is_inline=False,is_inline_chosen=False) -> bool:
     """
     Checks if the user is allowed to use the bot.
     """
     if config['allowed_user_ids'] == '*':
         return True
-
-    user_id = update.inline_query.from_user.id if is_inline else update.message.from_user.id
+        
+    user_id = update.chosen_inline_result.from_user.id if is_inline_chosen else update.inline_query.from_user.id if is_inline else update.message.from_user.id
     if is_admin(config, user_id):
         return True
-    name = update.inline_query.from_user.name if is_inline else update.message.from_user.name
+    name = update.chosen_inline_result.from_user.name if is_inline_chosen else update.inline_query.from_user.name if is_inline else update.message.from_user.name
     allowed_user_ids = config['allowed_user_ids'].split(',')
     # Check if user is allowed
     if str(user_id) in allowed_user_ids:
@@ -226,7 +226,7 @@ def get_user_budget(config, user_id) -> float | None:
     return None
 
 
-def get_remaining_budget(config, usage, update: Update, is_inline=False) -> float:
+def get_remaining_budget(config, usage, update: Update, is_inline=False,is_inline_chosen=False) -> float:
     """
     Calculate the remaining budget for a user based on their current usage.
     :param config: The bot configuration object
@@ -242,8 +242,8 @@ def get_remaining_budget(config, usage, update: Update, is_inline=False) -> floa
         "all-time": "cost_all_time"
     }
 
-    user_id = update.inline_query.from_user.id if is_inline else update.message.from_user.id
-    name = update.inline_query.from_user.name if is_inline else update.message.from_user.name
+    name = update.chosen_inline_result.from_user.name if is_inline_chosen else update.inline_query.from_user.name if is_inline else update.message.from_user.name
+    user_id = update.chosen_inline_result.from_user.id if is_inline_chosen else update.inline_query.from_user.id if is_inline else update.message.from_user.id
     if user_id not in usage:
         usage[user_id] = UsageTracker(user_id, name)
 
@@ -261,7 +261,7 @@ def get_remaining_budget(config, usage, update: Update, is_inline=False) -> floa
     return config['guest_budget'] - cost
 
 
-def is_within_budget(config, usage, update: Update, is_inline=False) -> bool:
+def is_within_budget(config, usage, update: Update, is_inline=False,is_inline_chosen=False) -> bool:
     """
     Checks if the user reached their usage limit.
     Initializes UsageTracker for user and guest when needed.
@@ -271,11 +271,11 @@ def is_within_budget(config, usage, update: Update, is_inline=False) -> bool:
     :param is_inline: Boolean flag for inline queries
     :return: Boolean indicating if the user has a positive budget
     """
-    user_id = update.inline_query.from_user.id if is_inline else update.message.from_user.id
-    name = update.inline_query.from_user.name if is_inline else update.message.from_user.name
+    name = update.chosen_inline_result.from_user.name if is_inline_chosen else update.inline_query.from_user.name if is_inline else update.message.from_user.name
+    user_id = update.chosen_inline_result.from_user.id if is_inline_chosen else update.inline_query.from_user.id if is_inline else update.message.from_user.id
     if user_id not in usage:
         usage[user_id] = UsageTracker(user_id, name)
-    remaining_budget = get_remaining_budget(config, usage, update, is_inline=is_inline)
+    remaining_budget = get_remaining_budget(config, usage, update, is_inline=is_inline,is_inline_chosen=is_inline_chosen)
     return remaining_budget > 0
 
 
