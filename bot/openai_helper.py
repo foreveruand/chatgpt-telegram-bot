@@ -67,7 +67,7 @@ def are_functions_available(model: str) -> bool:
         return False
     if model in O_MODELS:
         return False
-    if model in DEEP_SEEK_MODELS:
+    if model in ("deepseek-reasoner"):
         return False
     return True
 
@@ -283,14 +283,14 @@ class OpenAIHelper:
                 logging.debug(f'enable functions for this chat')
                 functions = self.plugin_manager.get_functions_specs()
                 if len(functions) > 0:
-                    if self.config['provider']=='azure' or self.config['provider']=='deepseek':
+                    if self.config['provider'] in {'azure', 'deepseek'}:
                         common_args['tools'] = self.plugin_manager.get_functions_specs('azure')
-                        common_args['tool_choice'] = 'auto'
-                        logging.debug(f"add function(azure):{common_args['tools']} into request")
+                        common_args['tool_choice'] = 'auto' if self.config['provider']=='azure' else 'none'
+                        logging.info(f"add function(azure):{common_args['tools']} into request")
                     else:
                         common_args['functions'] = self.plugin_manager.get_functions_specs()
                         common_args['function_call'] = 'auto'
-                        logging.debug(f"add function:{common_args['functions']} into request")
+                        logging.info(f"add function:{common_args['functions']} into request")
             return await self.client.chat.completions.create(**common_args)
 
         except openai.RateLimitError as e:
@@ -310,8 +310,8 @@ class OpenAIHelper:
             async for item in response:
                 if not item.choices:
                     continue
-                logging.debug(f'handle response from openai(handle function): {item}')
-                if (self.config['provider']=='azure' or self.config['provider']=='deepseek') and len(item.choices) > 0:
+                logging.info(f'handle response from openai(handle function): {item}')
+                if self.config['provider'] in {'azure', 'deepseek'} and len(item.choices) > 0:
                     # Process the model's response
                     first_choice = item.choices[0]
                     if first_choice.delta and first_choice.delta.tool_calls:
@@ -343,7 +343,7 @@ class OpenAIHelper:
                 else:
                     return response, plugins_used
         else:
-            if (self.config['provider']=='azure' or self.config['provider']=='deepseek') and len(item.choices) > 0:
+            if self.config['provider'] in {'azure', 'deepseek'} and len(item.choices) > 0:
                 return
                 first_choice = response.choices[0]
                 if first_choice.message.tool_calls:
