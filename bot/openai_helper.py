@@ -286,11 +286,11 @@ class OpenAIHelper:
                     if self.config['provider'] in {'azure', 'deepseek'}:
                         common_args['tools'] = self.plugin_manager.get_functions_specs('azure')
                         common_args['tool_choice'] = 'auto' if self.config['provider']=='azure' else 'none'
-                        logging.info(f"add function(azure):{common_args['tools']} into request")
+                        # logging.debug(f"add function(azure):{common_args['tools']} into request")
                     else:
                         common_args['functions'] = self.plugin_manager.get_functions_specs()
                         common_args['function_call'] = 'auto'
-                        logging.info(f"add function:{common_args['functions']} into request")
+                        # logging.debug(f"add function:{common_args['functions']} into request")
             return await self.client.chat.completions.create(**common_args)
 
         except openai.RateLimitError as e:
@@ -310,12 +310,11 @@ class OpenAIHelper:
             async for item in response:
                 if not item.choices:
                     continue
-                logging.info(f'handle response from openai(handle function): {item}')
+                # logging.debug(f'handle response from openai(handle function): {item}')
                 if self.config['provider'] in {'azure', 'deepseek'} and len(item.choices) > 0:
                     # Process the model's response
                     first_choice = item.choices[0]
                     if first_choice.delta and first_choice.delta.tool_calls:
-                        # logging.info(f'found tool calls')
                         for function_chunk in first_choice.delta.tool_calls:
                             if function_chunk.function.arguments:
                                 arguments += function_chunk.function.arguments
