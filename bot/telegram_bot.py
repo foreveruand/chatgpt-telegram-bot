@@ -42,7 +42,8 @@ class ChatGPTTelegramBot:
             BotCommand(command='help', description=localized_text('help_description', bot_language)),
             BotCommand(command='reset', description=localized_text('reset_description', bot_language)),
             BotCommand(command='stats', description=localized_text('stats_description', bot_language)),
-            BotCommand(command='resend', description=localized_text('resend_description', bot_language))
+            BotCommand(command='resend', description=localized_text('resend_description', bot_language)),
+            BotCommand(command='set', description="change the model by `/set provider model`")
         ]
         # If imaging is enabled, add the "image" command to the list
         if self.config.get('enable_image_generation', False):
@@ -191,6 +192,7 @@ class ChatGPTTelegramBot:
         Change the model.
         """
         user_id = update.message.from_user.id
+        chat_id = update.effective_chat.id
         if not is_admin(self.config, user_id):
             logging.warning(f'User {update.message.from_user.name} (id: {update.message.from_user.id}) '
                             'is not allowed to change the model')
@@ -204,8 +206,25 @@ class ChatGPTTelegramBot:
         command_args = command_args.split()
         try:
             update_config = {'provider': command_args[0],'model':command_args[1]}
+            file_path = '.env'
+            with open(file_path, 'r') as file:
+                lines = file.readlines()
+            for i, line in enumerate(lines):
+                if line.startswith('OPENAI_PROVIDER='):
+                    lines[i] = f'OPENAI_PROVIDER={command_args[0]}\n'
+                elif command_args[0]=='deepseek' and line.startswith('DEEPSEEK_MODEL='):
+                    lines[i] = f'DEEPSEEK_MODEL={command_args[1]}\n'
+                elif command_args[0]=='deepseek' and line.startswith('ENABLE_FUNCTIONS='):
+                    lines[i] = f'ENABLE_FUNCTIONS=false\n'
+                elif line.startswith('ENABLE_FUNCTIONS='):
+                    lines[i] = f'ENABLE_FUNCTIONS=true\n'
+                elif (not command_args[0]=='deepseek' ) and line.startswith('OPENAI_MODEL='):
+                    lines[i] = f'OPENAI_MODEL={command_args[1]}\n'
+            with open(file_path, 'w') as file:    
+                file.writelines(lines)
             self.openai.update_config(update_config)
             self.reload_config()
+            self.openai.reset_chat_history(chat_id=chat_id)
             await update.message.reply_text(f'change config to {update_config}', parse_mode=constants.ParseMode.MARKDOWN)
         except Exception as e:
             await update.message.reply_text(f'change model failed with error {e}', parse_mode=constants.ParseMode.MARKDOWN)
