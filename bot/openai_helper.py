@@ -67,6 +67,8 @@ def are_functions_available(model: str) -> bool:
         return False
     if model in O_MODELS:
         return False
+    if model in DEEP_SEEK_MODELS:
+        return False
     return True
 
 
@@ -127,8 +129,11 @@ class OpenAIHelper:
             self.client = openai.AsyncOpenAI(api_key=self.config['deepseek_api_key'], base_url=self.config['deepseek_base_url'],http_client=http_client)
         else :
             self.client = openai.AsyncOpenAI(api_key=self.config['api_key'], base_url=self.config['base_url'],http_client=http_client)
+
     def update_config(self, config):
         self.config.update(config)
+        update_function = {'enable_functions': str(are_functions_available(self.config['model'])).lower() == 'true'}
+        self.config.update(update_function)
         self.reload_config()
         pass
     def get_conversation_stats(self, chat_id: int) -> tuple[int, int]:
@@ -278,7 +283,7 @@ class OpenAIHelper:
                 logging.debug(f'enable functions for this chat')
                 functions = self.plugin_manager.get_functions_specs()
                 if len(functions) > 0:
-                    if self.config['provider']=='azure':
+                    if self.config['provider']=='azure' or self.config['provider']=='deepseek':
                         common_args['tools'] = self.plugin_manager.get_functions_specs('azure')
                         common_args['tool_choice'] = 'auto'
                         logging.debug(f"add function(azure):{common_args['tools']} into request")
@@ -306,7 +311,7 @@ class OpenAIHelper:
                 if not item.choices:
                     continue
                 logging.debug(f'handle response from openai(handle function): {item}')
-                if self.config['provider']=='azure' and len(item.choices) > 0:
+                if (self.config['provider']=='azure' or self.config['provider']=='deepseek') and len(item.choices) > 0:
                     # Process the model's response
                     first_choice = item.choices[0]
                     if first_choice.delta and first_choice.delta.tool_calls:
@@ -338,16 +343,17 @@ class OpenAIHelper:
                 else:
                     return response, plugins_used
         else:
-            if self.config['provider']=='azure' and len(item.choices) > 0:
+            if (self.config['provider']=='azure' or self.config['provider']=='deepseek') and len(item.choices) > 0:
                 return
-                # first_choice = response.choices[0]
-                # if first_choice.message.tool_calls:
-                #     if first_choice.message.function_call.name:
-                #         function_name += first_choice.message.function_call.name
-                #     if first_choice.message.function_call.arguments:
-                #         arguments += first_choice.message.function_call.arguments
-                # else:
-                #     return response, plugins_used
+                first_choice = response.choices[0]
+                if first_choice.message.tool_calls:
+                    for tool_call in first_choice.message.tool_calls:
+                        if tool_call.function.name:
+                            function_name += tool_call.function.name
+                        if tool_call.function.arguments:
+                            arguments += tool_call.function.arguments
+                else:
+                    return response, plugins_used
             elif len(response.choices) > 0:
                 first_choice = response.choices[0]
                 if first_choice.message.function_call:
@@ -374,7 +380,7 @@ class OpenAIHelper:
 
         self.__add_function_call_to_history(chat_id=chat_id, function_name=function_name, content=function_response,tool_call_id=tool_call_id,arguments=arguments)
 
-        if self.config['provider']=='azure':
+        if self.config['provider']=='azure' or self.config['provider']=='deepseek':
             response = await self.client.chat.completions.create(
                 model=self.config['model'],
                 messages=self.conversations[chat_id],
