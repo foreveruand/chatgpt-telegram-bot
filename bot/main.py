@@ -30,14 +30,18 @@ def main():
     model = os.environ.get('OPENAI_MODEL', 'gpt-4o')
     if os.environ['OPENAI_PROVIDER']=='deepseek':
         model = os.environ.get('DEEPSEEK_MODEL', 'deepseek-chat')
+    if os.environ['OPENAI_PROVIDER']=='worker':
+        model = os.environ.get('WORKER_MODEL', '@cf/qwen/qwen1.5-7b-chat-awq')
     functions_available = are_functions_available(model=model)
     max_tokens_default = default_max_tokens(model=model)
     openai_config = {
         'api_key': os.environ['OPENAI_API_KEY'],
-        'deepseek_api_key': os.environ['DEEPSEEK_API_KEY'],
-        'deepseek_base_url': os.environ['DEEPSEEK_BASE_URL'],
+        'deepseek_api_key': os.environ.get('DEEPSEEK_API_KEY', ''),
+        'deepseek_base_url': os.environ.get('DEEPSEEK_BASE_URL', 'https://api.deepseek.com/v1'),
+        'worker_api_key': os.environ.get('WORKER_API_KEY', ''),
+        'worker_accountid': os.environ.get('WORKER_ACCOUNT_ID', ''),
         'provider': os.environ['OPENAI_PROVIDER'],
-        'base_url': os.environ['OPENAI_BASE_URL'],
+        'base_url': os.environ.get('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
         'show_usage': os.environ.get('SHOW_USAGE', 'false').lower() == 'true',
         'stream': os.environ.get('STREAM', 'true').lower() == 'true',
         'proxy': os.environ.get('PROXY', None) or os.environ.get('OPENAI_PROXY', None),

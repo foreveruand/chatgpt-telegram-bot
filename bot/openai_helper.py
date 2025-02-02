@@ -26,9 +26,11 @@ GPT_4_32K_MODELS = ("gpt-4-32k", "gpt-4-32k-0314", "gpt-4-32k-0613")
 GPT_4_VISION_MODELS = ("gpt-4o",)
 GPT_4_128K_MODELS = ("gpt-4-1106-preview", "gpt-4-0125-preview", "gpt-4-turbo-preview", "gpt-4-turbo", "gpt-4-turbo-2024-04-09")
 GPT_4O_MODELS = ("gpt-4o", "gpt-4o-mini", "chatgpt-4o-latest")
+AZURE_MODELS = ("gpt-4o","gpt-4o-mini")
 O_MODELS = ("o1", "o1-mini", "o1-preview")
 DEEP_SEEK_MODELS= ("deepseek-chat","deepseek-reasoner")
-GPT_ALL_MODELS = DEEP_SEEK_MODELS+GPT_3_MODELS + GPT_3_16K_MODELS + GPT_4_MODELS + GPT_4_32K_MODELS + GPT_4_VISION_MODELS + GPT_4_128K_MODELS + GPT_4O_MODELS + O_MODELS
+WORKER_MODELS = ("@cf/qwen/qwen1.5-7b-chat-awq","@hf/thebloke/deepseek-coder-6.7b-base-awq","@cf/deepseek-ai/deepseek-r1-distill-qwen-32b")
+GPT_ALL_MODELS = WORKER_MODELS + DEEP_SEEK_MODELS+GPT_3_MODELS + GPT_3_16K_MODELS + GPT_4_MODELS + GPT_4_32K_MODELS + GPT_4_VISION_MODELS + GPT_4_128K_MODELS + GPT_4O_MODELS + O_MODELS
 
 def default_max_tokens(model: str) -> int:
     """
@@ -68,6 +70,8 @@ def are_functions_available(model: str) -> bool:
     if model in O_MODELS:
         return False
     if model in ("deepseek-reasoner"):
+        return False
+    if model in WORKER_MODELS:
         return False
     return True
 
@@ -113,6 +117,8 @@ class OpenAIHelper:
             self.client = openai.AsyncAzureOpenAI(api_key=config['api_key'], http_client=http_client,azure_endpoint=config['base_url'],api_version="2024-07-01-preview")
         elif (config['provider']=='deepseek'):
             self.client = openai.AsyncOpenAI(api_key=config['deepseek_api_key'], base_url=config['deepseek_base_url'],http_client=http_client)
+        elif (config['provider']=='worker'):
+            self.client = openai.AsyncOpenAI(api_key=config['worker_api_key'],base_url= f"https://api.cloudflare.com/client/v4/accounts/{config['worker_accountid']}/ai/v1",http_client=http_client)
         else :
             self.client = openai.AsyncOpenAI(api_key=config['api_key'], base_url=config['base_url'],http_client=http_client)
         self.config = config
@@ -127,6 +133,8 @@ class OpenAIHelper:
             self.client = openai.AsyncAzureOpenAI(api_key=self.config['api_key'], http_client=http_client,azure_endpoint=self.config['base_url'],api_version="2024-07-01-preview")
         elif (self.config['provider']=='deepseek'):
             self.client = openai.AsyncOpenAI(api_key=self.config['deepseek_api_key'], base_url=self.config['deepseek_base_url'],http_client=http_client)
+        elif (self.config['provider']=='worker'):
+            self.client = openai.AsyncOpenAI(api_key=self.config['worker_api_key'],base_url= f"https://api.cloudflare.com/client/v4/accounts/{self.config['worker_accountid']}/ai/v1",http_client=http_client)
         else :
             self.client = openai.AsyncOpenAI(api_key=self.config['api_key'], base_url=self.config['base_url'],http_client=http_client)
 
@@ -685,7 +693,7 @@ class OpenAIHelper:
         :return: The summary
         """
         messages = [
-            {"role": "assistant" if self.config['model'] in O_MODELS else "system", "content": "Summarize this conversation in 700 characters or less"},
+            {"role": "assistant" if self.config['model'] in O_MODELS else "system", "content": "Summarize this conversation in 500 characters or less"},
             {"role": "user", "content": str(conversation)}
         ]
         response = await self.client.chat.completions.create(

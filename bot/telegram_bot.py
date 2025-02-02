@@ -20,9 +20,15 @@ from utils import is_group_chat, get_thread_id, message_text, wrap_with_indicato
     edit_message_with_retry, get_stream_cutoff_values, is_allowed, get_remaining_budget, is_admin, is_within_budget, \
     get_reply_to_message_id, add_chat_request_to_usage_tracker, error_handler, is_direct_result, handle_direct_result, \
     cleanup_intermediate_files
-from openai_helper import OpenAIHelper, localized_text, are_functions_available
+from openai_helper import OpenAIHelper, localized_text, are_functions_available,WORKER_MODELS, AZURE_MODELS, DEEP_SEEK_MODELS
 from usage_tracker import UsageTracker
 
+def generate_pattern():
+    # 合并所有模型列表
+    all_models = AZURE_MODELS + WORKER_MODELS + DEEP_SEEK_MODELS
+    # 将模型名称合并成一个正则表达式模式
+    pattern = '^(' + '|'.join(all_models) + ')$'
+    return pattern
 
 class ChatGPTTelegramBot:
     """
@@ -43,7 +49,7 @@ class ChatGPTTelegramBot:
             BotCommand(command='reset', description=localized_text('reset_description', bot_language)),
             BotCommand(command='stats', description=localized_text('stats_description', bot_language)),
             BotCommand(command='resend', description=localized_text('resend_description', bot_language)),
-            BotCommand(command='set', description="change the model by `/set provider model`")
+            BotCommand(command='set', description=localized_text('set_description', bot_language))
         ]
         # If imaging is enabled, add the "image" command to the list
         if self.config.get('enable_image_generation', False):
@@ -201,32 +207,13 @@ class ChatGPTTelegramBot:
 
         logging.info(f'Admin {update.message.from_user.name} (id: {update.message.from_user.id}) '
                      'requested to change the model')
-        
-        command_args = message_text(update.message)
-        command_args = command_args.split()
-        try:
-            update_config = {'provider': command_args[0],'model':command_args[1]}
-            file_path = '.env'
-            with open(file_path, 'r') as file:
-                lines = file.readlines()
-            for i, line in enumerate(lines):
-                if line.startswith('OPENAI_PROVIDER='):
-                    lines[i] = f'OPENAI_PROVIDER={command_args[0]}\n'
-                elif command_args[0]=='deepseek' and line.startswith('DEEPSEEK_MODEL='):
-                    lines[i] = f'DEEPSEEK_MODEL={command_args[1]}\n'
-                elif line.startswith('ENABLE_FUNCTIONS='):
-                    enable_function = str(are_functions_available(command_args[1])).lower() == 'true'
-                    lines[i] = f'ENABLE_FUNCTIONS={enable_function}\n'
-                elif (not command_args[0]=='deepseek' ) and line.startswith('OPENAI_MODEL='):
-                    lines[i] = f'OPENAI_MODEL={command_args[1]}\n'
-            with open(file_path, 'w') as file:    
-                file.writelines(lines)
-            self.openai.update_config(update_config)
-            self.reload_config()
-            self.openai.reset_chat_history(chat_id=chat_id)
-            await update.message.reply_text(f'change config to {update_config}', parse_mode=constants.ParseMode.MARKDOWN)
-        except Exception as e:
-            await update.message.reply_text(f'change model failed with error {e}', parse_mode=constants.ParseMode.MARKDOWN)
+        keyboard = [
+            [InlineKeyboardButton("Azure", callback_data='azure'),
+            InlineKeyboardButton("Cloudflare", callback_data='worker'),
+            InlineKeyboardButton("DeepSeek", callback_data='deepseek')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text('Choose an AI provider', reply_markup=reply_markup)
 
     async def resend(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -1207,6 +1194,62 @@ class ChatGPTTelegramBot:
         """
         await application.bot.set_my_commands(self.group_commands, scope=BotCommandScopeAllGroupChats())
         await application.bot.set_my_commands(self.commands)
+    async def platform_selection(self, update: Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        await query.answer()
+        
+        platform = query.data
+        user_id = query.from_user.id
+
+        # # 保存用户选择的平台
+        # user_configs[user_id] = {'platform': platform}
+        
+        # 根据选择展示模型列表
+        if platform == 'azure':
+            models = AZURE_MODELS
+        elif platform == 'worker':
+            models = WORKER_MODELS
+        else:
+            models = DEEP_SEEK_MODELS
+        
+        keyboard = [[InlineKeyboardButton(model, callback_data=model)] for model in models]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text('Choose an AI model', reply_markup=reply_markup)
+
+    async def model_selection(self, update: Update, context: CallbackContext) -> None:
+        query = update.callback_query
+        await query.answer()
+        
+        model = query.data
+        platform = ''
+        user_id = query.from_user.id
+        chat_id = query.message.chat.id
+
+        if model in WORKER_MODELS:
+            platform = 'worker'
+        elif model in DEEP_SEEK_MODELS:
+            platform = 'deepseek'
+        else:
+            platform = 'azure'
+        try:
+            update_config = {'provider': platform,'model':model}
+            file_path = '.env'
+            self.openai.update_config(update_config)
+            self.reload_config()
+            self.openai.reset_chat_history(chat_id=chat_id)
+            with open(file_path, 'r') as file:
+                lines = file.readlines()
+            for i, line in enumerate(lines):
+                if line.startswith('OPENAI_PROVIDER='):
+                    lines[i] = f'OPENAI_PROVIDER={platform}\n'
+                elif line.startswith('ENABLE_FUNCTIONS='):
+                    enable_function = str(are_functions_available(model)).lower() == 'true'
+                    lines[i] = f'ENABLE_FUNCTIONS={enable_function}\n'
+            with open(file_path, 'w') as file:    
+                file.writelines(lines)
+            await query.edit_message_text(f'change config to {update_config}')
+        except Exception as e:
+            await query.edit_message_text(f'change model failed with error {e}')
 
     def run(self):
         """
@@ -1242,6 +1285,8 @@ class ChatGPTTelegramBot:
         application.add_handler(InlineQueryHandler(self.inline_query, chat_types=[
             constants.ChatType.GROUP, constants.ChatType.SUPERGROUP, constants.ChatType.PRIVATE
         ]))
+        application.add_handler(CallbackQueryHandler(self.platform_selection, pattern='^(azure|worker|deepseek)$'))
+        application.add_handler(CallbackQueryHandler(self.model_selection, pattern=generate_pattern()))
         # application.add_handler(CallbackQueryHandler(self.handle_callback_inline_query))
         application.add_handler(ChosenInlineResultHandler(self.inline_query_result_chosen))
         application.add_error_handler(error_handler)
