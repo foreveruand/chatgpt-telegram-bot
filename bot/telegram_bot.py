@@ -49,7 +49,8 @@ class ChatGPTTelegramBot:
             BotCommand(command='reset', description=localized_text('reset_description', bot_language)),
             BotCommand(command='stats', description=localized_text('stats_description', bot_language)),
             BotCommand(command='resend', description=localized_text('resend_description', bot_language)),
-            BotCommand(command='set', description=localized_text('set_description', bot_language))
+            BotCommand(command='set', description=localized_text('set_description', bot_language)),
+            BotCommand(command='model', description=localized_text('modelused_description', bot_language))
         ]
         # If imaging is enabled, add the "image" command to the list
         if self.config.get('enable_image_generation', False):
@@ -215,6 +216,24 @@ class ChatGPTTelegramBot:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text('Choose an AI provider', reply_markup=reply_markup)
+    
+    async def model(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """
+        Show the model used.
+        """
+        user_id = update.message.from_user.id
+        chat_id = update.effective_chat.id
+
+        model_used , ai_provider = self.openai.get_model()
+        message = await update.message.reply_text(
+            f"The model is {model_used}, supported by {ai_provider}"
+        )
+
+        # Wait for 10 seconds
+        await asyncio.sleep(5)
+
+        # Delete the message after 10 seconds
+        await message.delete()
 
     async def resend(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -1252,7 +1271,14 @@ class ChatGPTTelegramBot:
                     lines[i] = f'ENABLE_FUNCTIONS={enable_function}\n'
             with open(file_path, 'w') as file:    
                 file.writelines(lines)
-            await query.edit_message_text(f'change config to {update_config}')
+
+            edited_message = await query.edit_message_text(
+                f'Changed config to {update_config}'
+            )
+            # Wait for 10 seconds
+            await asyncio.sleep(10)
+            # Delete the edited message after 10 seconds
+            await edited_message.delete()
         except Exception as e:
             await query.edit_message_text(f'change model failed with error {e}')
 
@@ -1276,6 +1302,7 @@ class ChatGPTTelegramBot:
         application.add_handler(CommandHandler('stats', self.stats))
         application.add_handler(CommandHandler('resend', self.resend))
         application.add_handler(CommandHandler('set', self.setmodel))
+        application.add_handler(CommandHandler('model', self.model))
         application.add_handler(CommandHandler(
             'chat', self.prompt, filters=filters.ChatType.GROUP | filters.ChatType.SUPERGROUP)
         )
@@ -1291,7 +1318,7 @@ class ChatGPTTelegramBot:
             constants.ChatType.GROUP, constants.ChatType.SUPERGROUP, constants.ChatType.PRIVATE
         ]))
         application.add_handler(CallbackQueryHandler(self.platform_selection, pattern='^(azure|worker|deepseek|hugging)$'))
-        application.add_handler(CallbackQueryHandler(self.model_selection, pattern=generate_pattern()))
+        application.add_handler(CallbackQueryHandler(self.model_selection,  pattern=generate_pattern()))
         # application.add_handler(CallbackQueryHandler(self.handle_callback_inline_query))
         application.add_handler(ChosenInlineResultHandler(self.inline_query_result_chosen))
         application.add_error_handler(error_handler)

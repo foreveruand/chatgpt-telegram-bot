@@ -138,6 +138,9 @@ class OpenAIHelper:
         new_obj=self.__class__(self.config,self.plugin_manager)
         self.__dict__.update(new_obj.__dict__)
 
+    def get_model(self):
+        return self.config['model'],self.config['provider']
+
     def update_config(self, config):
         self.config.update(config)
         update_function = {'enable_functions': str(are_functions_available(self.config['model'])).lower() == 'true'}
