@@ -29,7 +29,7 @@ GPT_4O_MODELS = ("gpt-4o", "gpt-4o-mini", "chatgpt-4o-latest")
 AZURE_MODELS = ("gpt-4o","gpt-4o-mini")
 O_MODELS = ("o1", "o1-mini", "o1-preview")
 DEEP_SEEK_MODELS= ("deepseek-chat","deepseek-reasoner")
-WORKER_MODELS = ("@cf/qwen/qwen1.5-7b-chat-awq","@hf/thebloke/deepseek-coder-6.7b-base-awq","@cf/deepseek-ai/deepseek-r1-distill-qwen-32b")
+WORKER_MODELS = ("@cf/qwen/qwen1.5-7b-chat-awq","@cf/qwen/qwen1.5-14b-chat-awq","@hf/thebloke/deepseek-coder-6.7b-base-awq","@cf/deepseek-ai/deepseek-r1-distill-qwen-32b")
 HUGGINGFACE_MODELS = ("Qwen/Qwen2.5-Coder-32B-Instruct","facebook/bart-large-cnn")
 GPT_ALL_MODELS = HUGGINGFACE_MODELS + WORKER_MODELS + DEEP_SEEK_MODELS+GPT_3_MODELS + GPT_3_16K_MODELS + GPT_4_MODELS + GPT_4_32K_MODELS + GPT_4_VISION_MODELS + GPT_4_128K_MODELS + GPT_4O_MODELS + O_MODELS
 
