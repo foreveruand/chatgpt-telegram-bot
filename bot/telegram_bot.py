@@ -11,7 +11,7 @@ from telegram import InlineKeyboardMarkup, InlineKeyboardButton, InlineQueryResu
 from telegram import InputTextMessageContent, BotCommand
 from telegram.error import RetryAfter, TimedOut, BadRequest
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, \
-    filters, InlineQueryHandler, ChosenInlineResultHandler, CallbackQueryHandler, Application, ContextTypes, CallbackContext
+    filters, InlineQueryHandler, ChosenInlineResultHandler, CallbackQueryHandler, Application, ContextTypes, CallbackContext, JobQueue
 
 from pydub import AudioSegment
 from PIL import Image
@@ -49,7 +49,7 @@ class ChatGPTTelegramBot:
             BotCommand(command='reset', description=localized_text('reset_description', bot_language)),
             BotCommand(command='stats', description=localized_text('stats_description', bot_language)),
             BotCommand(command='resend', description=localized_text('resend_description', bot_language)),
-            BotCommand(command='set', description=localized_text('set_description', bot_language)),
+            # BotCommand(command='set', description=localized_text('set_description', bot_language)),
             BotCommand(command='model', description=localized_text('modelused_description', bot_language))
         ]
         # If imaging is enabled, add the "image" command to the list
@@ -194,46 +194,23 @@ class ChatGPTTelegramBot:
         usage_text = text_current_conversation + text_today + text_month + text_budget
         await update.message.reply_text(usage_text, parse_mode=constants.ParseMode.MARKDOWN)
 
-    async def setmodel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """
-        Change the model.
-        """
-        user_id = update.message.from_user.id
-        chat_id = update.effective_chat.id
-        if not is_admin(self.config, user_id):
-            logging.warning(f'User {update.message.from_user.name} (id: {update.message.from_user.id}) '
-                            'is not allowed to change the model')
-            await self.send_disallowed_message(update, context)
-            return
-
-        logging.info(f'Admin {update.message.from_user.name} (id: {update.message.from_user.id}) '
-                     'requested to change the model')
-        keyboard = [
-            [InlineKeyboardButton("Azure", callback_data='azure'),
-            InlineKeyboardButton("Cloudflare", callback_data='worker'),
-            InlineKeyboardButton("DeepSeek", callback_data='deepseek'),
-            InlineKeyboardButton("Hugging", callback_data='hugging')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text('Choose an AI provider', reply_markup=reply_markup)
-    
     async def model(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
         Show the model used.
         """
         user_id = update.message.from_user.id
         chat_id = update.effective_chat.id
-
+        bot_language = self.config['bot_language']
         model_used , ai_provider = self.openai.get_model()
-        message = await update.message.reply_text(
-            f"The model is {model_used}, supported by {ai_provider}"
-        )
 
-        # Wait for 10 seconds
-        await asyncio.sleep(5)
+        keyboard = [
+            [InlineKeyboardButton(f"{localized_text('set_description', bot_language)}", callback_data='setmodel')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # Delete the message after 10 seconds
-        await message.delete()
+        message = await update.message.reply_text(f"The model is {model_used}, supported by {ai_provider}", reply_markup=reply_markup)
+
+        context.user_data['delete_message_job'] = context.job_queue.run_once(self.delete_message, 15, data = message)
 
     async def resend(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -1214,7 +1191,47 @@ class ChatGPTTelegramBot:
         """
         await application.bot.set_my_commands(self.group_commands, scope=BotCommandScopeAllGroupChats())
         await application.bot.set_my_commands(self.commands)
+
+    async def setmodel(self, update: Update, context: CallbackContext):
+        """
+        Change the model.
+        """
+        delete_job = context.user_data.get('delete_message_job')
+        if delete_job:
+            delete_job.remove()
+
+        query = update.callback_query
+        await query.answer()
+        
+        user_id = query.from_user.id
+        chat_id = query.message.chat.id
+
+        if not is_admin(self.config, user_id):
+            logging.warning(f'User {query.from_user.name} (id: {user_id}) '
+                            'is not allowed to change the model')
+            message = await query.edit_message_text('You are not allowed to change the model')
+            return
+
+
+        logging.info(f'Admin {query.from_user.name} (id: {user_id}) '
+                     'requested to change the model')
+
+        reply_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Azure", callback_data='azure'),
+            InlineKeyboardButton("Cloudflare", callback_data='worker'),
+            InlineKeyboardButton("DeepSeek", callback_data='deepseek'),
+            InlineKeyboardButton("Hugging", callback_data='hugging')]
+        ])
+
+        message = await query.edit_message_text('Choose an AI provider', reply_markup=reply_markup)
+
+        context.user_data['delete_message_job'] = context.application.job_queue.run_once(self.delete_message, 15, data=message)
+
     async def platform_selection(self, update: Update, context: CallbackContext) -> None:
+        delete_job = context.user_data.get('delete_message_job')
+        if delete_job:
+            delete_job.remove()
+
         query = update.callback_query
         await query.answer()
         
@@ -1236,9 +1253,16 @@ class ChatGPTTelegramBot:
         
         keyboard = [[InlineKeyboardButton(model, callback_data=model)] for model in models]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text('Choose an AI model', reply_markup=reply_markup)
+
+        message = await query.edit_message_text('Choose an AI model', reply_markup=reply_markup)
+
+        context.user_data['delete_message_job'] = context.application.job_queue.run_once(self.delete_message, 15, data=message)
 
     async def model_selection(self, update: Update, context: CallbackContext) -> None:
+        delete_job = context.user_data.get('delete_message_job')
+        if delete_job:
+            delete_job.remove()
+
         query = update.callback_query
         await query.answer()
         
@@ -1275,12 +1299,19 @@ class ChatGPTTelegramBot:
             edited_message = await query.edit_message_text(
                 f'Changed config to {update_config}'
             )
-            # Wait for 10 seconds
-            await asyncio.sleep(10)
-            # Delete the edited message after 10 seconds
-            await edited_message.delete()
+            context.user_data['delete_message_job'] = context.application.job_queue.run_once(self.delete_message, 15, data=edited_message)
+
         except Exception as e:
             await query.edit_message_text(f'change model failed with error {e}')
+
+
+    async def delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        message = context.job.data  # 获取任务上下文，即消息
+        try:
+            await message.delete()
+            print("Message deleted.")
+        except Exception as e:
+            print(f"Failed to delete message: {e}")
 
     def run(self):
         """
@@ -1301,7 +1332,7 @@ class ChatGPTTelegramBot:
         application.add_handler(CommandHandler('start', self.help))
         application.add_handler(CommandHandler('stats', self.stats))
         application.add_handler(CommandHandler('resend', self.resend))
-        application.add_handler(CommandHandler('set', self.setmodel))
+        # application.add_handler(CommandHandler('set', self.setmodel))
         application.add_handler(CommandHandler('model', self.model))
         application.add_handler(CommandHandler(
             'chat', self.prompt, filters=filters.ChatType.GROUP | filters.ChatType.SUPERGROUP)
@@ -1317,6 +1348,7 @@ class ChatGPTTelegramBot:
         application.add_handler(InlineQueryHandler(self.inline_query, chat_types=[
             constants.ChatType.GROUP, constants.ChatType.SUPERGROUP, constants.ChatType.PRIVATE
         ]))
+        application.add_handler(CallbackQueryHandler(self.setmodel, pattern='^(setmodel)$'))
         application.add_handler(CallbackQueryHandler(self.platform_selection, pattern='^(azure|worker|deepseek|hugging)$'))
         application.add_handler(CallbackQueryHandler(self.model_selection,  pattern=generate_pattern()))
         # application.add_handler(CallbackQueryHandler(self.handle_callback_inline_query))
