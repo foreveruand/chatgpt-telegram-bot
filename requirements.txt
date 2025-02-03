@@ -3,6 +3,7 @@ pydub~=0.25.1
 tiktoken==0.7.0
 openai==1.58.1
 python-telegram-bot==21.9
+python-telegram-bot[job-queue]
 requests~=2.32.3
 tenacity==8.3.0
 wolframalpha~=5.1.3
