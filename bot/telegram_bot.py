@@ -211,7 +211,7 @@ class ChatGPTTelegramBot:
             [InlineKeyboardButton("Azure", callback_data='azure'),
             InlineKeyboardButton("Cloudflare", callback_data='worker'),
             InlineKeyboardButton("DeepSeek", callback_data='deepseek'),
-            InlineKeyboardButton("Hugging(not use)", callback_data='hugging')]
+            InlineKeyboardButton("Hugging", callback_data='hugging')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text('Choose an AI provider', reply_markup=reply_markup)
@@ -1290,7 +1290,7 @@ class ChatGPTTelegramBot:
         application.add_handler(InlineQueryHandler(self.inline_query, chat_types=[
             constants.ChatType.GROUP, constants.ChatType.SUPERGROUP, constants.ChatType.PRIVATE
         ]))
-        application.add_handler(CallbackQueryHandler(self.platform_selection, pattern='^(azure|worker|deepseek)$'))
+        application.add_handler(CallbackQueryHandler(self.platform_selection, pattern='^(azure|worker|deepseek|hugging)$'))
         application.add_handler(CallbackQueryHandler(self.model_selection, pattern=generate_pattern()))
         # application.add_handler(CallbackQueryHandler(self.handle_callback_inline_query))
         application.add_handler(ChosenInlineResultHandler(self.inline_query_result_chosen))
