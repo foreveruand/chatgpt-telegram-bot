@@ -20,12 +20,12 @@ from utils import is_group_chat, get_thread_id, message_text, wrap_with_indicato
     edit_message_with_retry, get_stream_cutoff_values, is_allowed, get_remaining_budget, is_admin, is_within_budget, \
     get_reply_to_message_id, add_chat_request_to_usage_tracker, error_handler, is_direct_result, handle_direct_result, \
     cleanup_intermediate_files
-from openai_helper import OpenAIHelper, localized_text, are_functions_available,WORKER_MODELS, AZURE_MODELS, DEEP_SEEK_MODELS
+from openai_helper import OpenAIHelper, localized_text, are_functions_available,WORKER_MODELS, AZURE_MODELS, DEEP_SEEK_MODELS, HUGGINGFACE_MODELS
 from usage_tracker import UsageTracker
 
 def generate_pattern():
     # 合并所有模型列表
-    all_models = AZURE_MODELS + WORKER_MODELS + DEEP_SEEK_MODELS
+    all_models = HUGGINGFACE_MODELS+ AZURE_MODELS + WORKER_MODELS + DEEP_SEEK_MODELS
     # 将模型名称合并成一个正则表达式模式
     pattern = '^(' + '|'.join(all_models) + ')$'
     return pattern
@@ -210,7 +210,8 @@ class ChatGPTTelegramBot:
         keyboard = [
             [InlineKeyboardButton("Azure", callback_data='azure'),
             InlineKeyboardButton("Cloudflare", callback_data='worker'),
-            InlineKeyboardButton("DeepSeek", callback_data='deepseek')]
+            InlineKeyboardButton("DeepSeek", callback_data='deepseek'),
+            InlineKeyboardButton("Hugging(not use)", callback_data='hugging')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text('Choose an AI provider', reply_markup=reply_markup)
@@ -1209,6 +1210,8 @@ class ChatGPTTelegramBot:
             models = AZURE_MODELS
         elif platform == 'worker':
             models = WORKER_MODELS
+        elif platform == 'hugging':
+            models = HUGGINGFACE_MODELS
         else:
             models = DEEP_SEEK_MODELS
         
@@ -1229,6 +1232,8 @@ class ChatGPTTelegramBot:
             platform = 'worker'
         elif model in DEEP_SEEK_MODELS:
             platform = 'deepseek'
+        elif model in HUGGINGFACE_MODELS:
+            platform = 'hugging'
         else:
             platform = 'azure'
         try:

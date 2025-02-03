@@ -30,7 +30,8 @@ AZURE_MODELS = ("gpt-4o","gpt-4o-mini")
 O_MODELS = ("o1", "o1-mini", "o1-preview")
 DEEP_SEEK_MODELS= ("deepseek-chat","deepseek-reasoner")
 WORKER_MODELS = ("@cf/qwen/qwen1.5-7b-chat-awq","@hf/thebloke/deepseek-coder-6.7b-base-awq","@cf/deepseek-ai/deepseek-r1-distill-qwen-32b")
-GPT_ALL_MODELS = WORKER_MODELS + DEEP_SEEK_MODELS+GPT_3_MODELS + GPT_3_16K_MODELS + GPT_4_MODELS + GPT_4_32K_MODELS + GPT_4_VISION_MODELS + GPT_4_128K_MODELS + GPT_4O_MODELS + O_MODELS
+HUGGINGFACE_MODELS = ("deepseek-ai/DeepSeek-R1-Distill-Qwen-32B","facebook/bart-large-cnn")
+GPT_ALL_MODELS = HUGGINGFACE_MODELS + WORKER_MODELS + DEEP_SEEK_MODELS+GPT_3_MODELS + GPT_3_16K_MODELS + GPT_4_MODELS + GPT_4_32K_MODELS + GPT_4_VISION_MODELS + GPT_4_128K_MODELS + GPT_4O_MODELS + O_MODELS
 
 def default_max_tokens(model: str) -> int:
     """
@@ -73,6 +74,8 @@ def are_functions_available(model: str) -> bool:
         return False
     if model in WORKER_MODELS:
         return False
+    if model in HUGGINGFACE_MODELS:
+        return False 
     return True
 
 
@@ -119,8 +122,12 @@ class OpenAIHelper:
             self.client = openai.AsyncOpenAI(api_key=config['deepseek_api_key'], base_url=config['deepseek_base_url'],http_client=http_client)
         elif (config['provider']=='worker'):
             self.client = openai.AsyncOpenAI(api_key=config['worker_api_key'],base_url= f"https://api.cloudflare.com/client/v4/accounts/{config['worker_accountid']}/ai/v1",http_client=http_client)
+        elif (config['provider']=='hugging'):
+            self.client = openai.AsyncOpenAI(api_key=config['huggingface_api_key'],base_url=config['huggingface_base_url'],http_client=http_client)
         else :
             self.client = openai.AsyncOpenAI(api_key=config['api_key'], base_url=config['base_url'],http_client=http_client)
+        
+        self.sumclient = openai.AsyncOpenAI(api_key=config['huggingface_api_key'],base_url=config['huggingface_base_url'],http_client=http_client)
         self.config = config
         self.plugin_manager = plugin_manager
         self.conversations: dict[int: list] = {}  # {chat_id: history}
@@ -128,15 +135,8 @@ class OpenAIHelper:
         self.last_updated: dict[int: datetime] = {}  # {chat_id: last_update_timestamp}
 
     def reload_config(self):
-        http_client = httpx.AsyncClient(proxy=self.config['proxy']) if 'proxy' in self.config else None
-        if (self.config['provider']=='azure'):
-            self.client = openai.AsyncAzureOpenAI(api_key=self.config['api_key'], http_client=http_client,azure_endpoint=self.config['base_url'],api_version="2024-07-01-preview")
-        elif (self.config['provider']=='deepseek'):
-            self.client = openai.AsyncOpenAI(api_key=self.config['deepseek_api_key'], base_url=self.config['deepseek_base_url'],http_client=http_client)
-        elif (self.config['provider']=='worker'):
-            self.client = openai.AsyncOpenAI(api_key=self.config['worker_api_key'],base_url= f"https://api.cloudflare.com/client/v4/accounts/{self.config['worker_accountid']}/ai/v1",http_client=http_client)
-        else :
-            self.client = openai.AsyncOpenAI(api_key=self.config['api_key'], base_url=self.config['base_url'],http_client=http_client)
+        new_obj=self.__class__(self.config,self.plugin_manager)
+        self.__dict__.update(new_obj.__dict__)
 
     def update_config(self, config):
         self.config.update(config)
@@ -728,6 +728,8 @@ class OpenAIHelper:
             else:
                 return 65_536
         elif self.config['model'] in DEEP_SEEK_MODELS:
+            return base
+        else:
             return base
         raise NotImplementedError(
             f"Max tokens for model {self.config['model']} is not implemented yet."

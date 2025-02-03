@@ -38,6 +38,8 @@ def main():
         'api_key': os.environ['OPENAI_API_KEY'],
         'deepseek_api_key': os.environ.get('DEEPSEEK_API_KEY', ''),
         'deepseek_base_url': os.environ.get('DEEPSEEK_BASE_URL', 'https://api.deepseek.com/v1'),
+        'huggingface_api_key': os.environ.get('HUGGINGFACE_API_KEY', ''),
+        'huggingface_base_url': os.environ.get('HUGGINGFACE_BASE_URL', 'https://api-inference.huggingface.co/v1/'),
         'worker_api_key': os.environ.get('WORKER_API_KEY', ''),
         'worker_accountid': os.environ.get('WORKER_ACCOUNT_ID', ''),
         'provider': os.environ['OPENAI_PROVIDER'],
