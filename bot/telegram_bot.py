@@ -209,7 +209,7 @@ class ChatGPTTelegramBot:
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         message = await update.message.reply_text(f"The model is {model_used}, supported by {ai_provider}", reply_markup=reply_markup)
-
+        context.job_queue.run_once(self.delete_message, 5, data = update.message)
         context.user_data['delete_message_job'] = context.job_queue.run_once(self.delete_message, 15, data = message)
 
     async def resend(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -256,10 +256,12 @@ class ChatGPTTelegramBot:
         chat_id = update.effective_chat.id
         reset_content = message_text(update.message)
         self.openai.reset_chat_history(chat_id=chat_id, content=reset_content)
-        await update.effective_message.reply_text(
+        message = await update.effective_message.reply_text(
             message_thread_id=get_thread_id(update),
             text=localized_text('reset_done', self.config['bot_language'])
         )
+        context.job_queue.run_once(self.delete_message, 5, data = message)
+        context.job_queue.run_once(self.delete_message, 5, data = update.message)
 
     async def image(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
