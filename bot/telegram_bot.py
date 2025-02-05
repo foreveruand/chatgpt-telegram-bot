@@ -983,6 +983,7 @@ class ChatGPTTelegramBot:
                         i += 1
                         if tokens != 'not_finished':
                             total_tokens = int(tokens)
+                add_chat_request_to_usage_tracker(self.usage, self.config, user_id, total_tokens)
             except Exception as e:
                 logging.exception(e)
                 localized_answer = localized_text('chat_fail', self.config['bot_language'])
