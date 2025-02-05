@@ -204,7 +204,10 @@ class ChatGPTTelegramBot:
         model_used , ai_provider = self.openai.get_model()
 
         keyboard = [
-            [InlineKeyboardButton(f"{localized_text('set_description', bot_language)}", callback_data='setmodel')]
+            [InlineKeyboardButton(f"{localized_text('set_description', bot_language)}", callback_data='setmodel')],
+            [InlineKeyboardButton(f"azure : gpt-4o-mini", callback_data='gpt-4o-mini')],
+            [InlineKeyboardButton(f"deepseek : deepseek-chat", callback_data='deepseek-chat')],
+            [InlineKeyboardButton(f"cf : @cf/qwen/qwen1.5-7b-chat-awq", callback_data='@cf/qwen/qwen1.5-7b-chat-awq')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
